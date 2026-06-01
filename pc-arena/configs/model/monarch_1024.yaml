@@ -1,0 +1,11 @@
+target: src.structures.HCLTMonarch.HCLTGeneral
+
+params:
+  x: "__train_data__:20000"
+  num_latents: 1024
+  block_size: 32
+
+  input_dist:
+    target: pyjuice.distributions.Categorical
+    params:
+      num_cats: 50262

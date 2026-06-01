@@ -1,0 +1,7 @@
+mode: adam
+num_epochs: 100000
+
+batch_size: 512
+lr: 5e-3
+beta1: 0.9
+beta2: 0.99

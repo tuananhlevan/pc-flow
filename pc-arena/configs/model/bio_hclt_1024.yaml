@@ -1,0 +1,8 @@
+target: pyjuice.structures.HCLT
+params:
+  x: __train_data__:20000
+  num_latents: 1024
+  input_dist:
+    target: pyjuice.distributions.Categorical
+    params:
+      num_cats: 3

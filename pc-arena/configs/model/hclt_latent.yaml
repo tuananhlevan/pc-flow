@@ -1,0 +1,11 @@
+target: pyjuice.structures.HCLT
+params:
+  x: __train_data__:20000
+  num_bins: 32
+  chunk_size: 32
+  num_latents: 256
+  input_dist:
+    target: pyjuice.distributions.Gaussian
+    params:
+      mu: 0.0
+      sigma: 1.0

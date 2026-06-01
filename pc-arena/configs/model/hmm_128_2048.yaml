@@ -1,0 +1,6 @@
+target: pyjuice.structures.HMM
+params:
+  seq_length: 128
+  num_latents: 2048
+  num_emits: 50272
+  homogeneous: true

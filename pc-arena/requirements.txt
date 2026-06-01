@@ -1,0 +1,5 @@
+pyjuice
+lightning
+wandb
+albumentations
+omegaconf

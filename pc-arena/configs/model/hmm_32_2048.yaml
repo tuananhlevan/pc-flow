@@ -1,0 +1,5 @@
+target: pyjuice.structures.HMM
+params:
+  seq_length: 32
+  num_latents: 2048
+  num_emits: 50262

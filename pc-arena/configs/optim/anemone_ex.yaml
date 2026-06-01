@@ -1,0 +1,11 @@
+mode: mini_em_scaled
+num_epochs: 100
+step_size: 0.2
+batch_size: 16384
+scheduler:
+  target: src.lr_schedules.CosineDecayLR
+  params:
+    base_lr: 0.2        
+    flat_steps: 50
+    total_steps: 2000 
+    min_lr: 0.01
