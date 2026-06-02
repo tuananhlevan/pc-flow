@@ -1,0 +1,17 @@
+target: src.data.DataModuleFromConfig
+params:
+  batch_size: 64
+  num_workers: 0
+  drop_last: true
+  pin_memory: true
+  sampler: __subset__:60000
+  train:
+    target: src.data.MNIST
+    params:
+      root: /scratch/anji/data/MNIST/
+      train: true
+  validation:
+    target: src.data.MNIST
+    params:
+      root: /scratch/anji/data/MNIST/
+      train: false

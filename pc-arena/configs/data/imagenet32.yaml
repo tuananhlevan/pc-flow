@@ -1,0 +1,25 @@
+target: src.data.DataModuleFromConfig
+params:
+  batch_size: 64
+  num_workers: 2
+  drop_last: true
+  pin_memory: true
+  sampler: __subset__:60000
+  train:
+    target: src.data.ImageNet32Train
+    params:
+      root: /scratch/anji/data/ImageNet/
+  validation:
+    target: src.data.ImageNet32Validation
+    params:
+      root: /scratch/anji/data/ImageNet/
+  transform_fns:
+    - target: src.transforms.Select
+      params:
+        key: img
+    - target: src.transforms.Patchify
+      params:
+        patch_size: 16
+        aligned: true
+    - target: src.transforms.RGB2YCoCgR
+    - target: src.transforms.Flatten
