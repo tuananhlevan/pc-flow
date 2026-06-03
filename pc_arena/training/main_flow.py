@@ -75,6 +75,7 @@ def main(rank, world_size, args):
 
     # Logging Setup
     base_folder = os.path.join("logs/", f"{args.data_config}/[{args.model_config}]-[flow-matching]/")
+    # base_folder = os.path.join("logs/", f"{args.data_config}/[{args.model_config}]-[flow-matching-uncon]/")
     mkdir_p(base_folder)
     logfile = os.path.join(base_folder, "logs.txt")
     pcfile_last = os.path.join(base_folder, "last.jpc")
@@ -111,6 +112,11 @@ def main(rank, world_size, args):
         {'params': pc.parameters(), 'lr': 1e-2}
     ])
     
+    if args.resume:
+        mlp.load_state_dict(torch.load(os.path.join(base_folder, "last_mlp.pt"), map_location=device))
+        optim_state = torch.load(os.path.join(base_folder, "last_optim.pt"), map_location=device)
+        optimizer.load_state_dict(optim_state)
+    
     channels = 1
     rf_dit = DiT_Llama(
             channels, 32, dim=64, n_layers=6, n_heads=4, num_classes=10
@@ -146,7 +152,8 @@ def main(rank, world_size, args):
             # We no longer need batch_x_next because we are maximizing marginal likelihood!
             batch_x_current = batch[:, :1024]
             t_current = batch[:, 1024:1025]
-            label = batch[:, 1025:]
+            labels = batch[:, 1025:]
+            uncond_labels = torch.full_like(labels.long().squeeze(-1), 10)
             
             optimizer.zero_grad()
             
@@ -154,7 +161,8 @@ def main(rank, world_size, args):
                 target_velocity = rf_dit(
                     batch_x_current.view(-1, 1, 32, 32), 
                     t_current.squeeze(-1), 
-                    label.long().squeeze(-1)
+                    # labels.long().squeeze(-1), 
+                    uncond_labels
                 ).flatten(start_dim=1)
             
             # CRITICAL: We need gradients with respect to the input to extract the Score
@@ -235,6 +243,7 @@ def main(rank, world_size, args):
             # Save the Neural-PC Hybrid
             juice.save(pcfile_last, pc)
             torch.save(mlp.module.state_dict(), pcfile_last.replace(".jpc", "_mlp.pt"))
+            torch.save(optimizer.state_dict(), pcfile_last.replace(".jpc", "_optim.pt"))
 
     if rank == 0 and args.wandb:
         wandb.finish()
