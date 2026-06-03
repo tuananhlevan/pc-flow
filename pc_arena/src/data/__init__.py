@@ -8,3 +8,4 @@ from .imagenet_sub import ImageNet16Train, ImageNet16Validation
 from .cifar import CIFAR
 from .mnist import MNIST
 from .traj_mnist import TrajMNIST
+from .distilled_mnist import DistilledMNIST

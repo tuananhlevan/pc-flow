@@ -3,8 +3,8 @@ from torch.utils.data import TensorDataset, DataLoader
 import os
 from tqdm import tqdm
 
-from rf import RF
-from dit import DiT_Llama
+from rec_flow.rf import RF
+from rec_flow.dit import DiT_Llama
 
 
 def generate_massive_trajectory_dataset(
@@ -23,7 +23,7 @@ def generate_massive_trajectory_dataset(
     Args:
         model: Your Flow Matching Teacher model.
         cond_dataloader: PyTorch DataLoader yielding conditioning tensors (e.g., labels).
-        latent_shape: The shape of a single noise tensor (e.g., (1, 28, 28) or (784,)).
+        latent_shape: The shape of a single noise tensor (e.g., (1, 32, 32) or (1024,)).
         anchor_points: List of discrete timesteps to save.
         null_cond: Tensor for Classifier-Free Guidance.
         sample_steps: Number of integration steps.
@@ -116,7 +116,7 @@ def create_joint_dataset(trajectory_dict, dir="pc-arena/data/TrajMNIST", splits=
     for anchor_t, x_t_tensor in trajectory_dict.items():
         batch_size = x_t_tensor.size(0)
         
-        # Flatten the 4D image tensor (B, C, H, W) down to 2D (B, 784)
+        # Flatten the 4D image tensor (B, C, H, W) down to 2D (B, 1024)
         x_t_flat = x_t_tensor.flatten(start_dim=1) 
         
         # Normalize t from [0, 1] to [-1, 1]
@@ -125,7 +125,7 @@ def create_joint_dataset(trajectory_dict, dir="pc-arena/data/TrajMNIST", splits=
         # Create the t column: shape (batch_size, 1)
         t_col = torch.full((batch_size, 1), normalized_t, dtype=x_t_flat.dtype, device=x_t_flat.device)
         
-        # Concatenate to make it 785 dimensions (batch_size, 785)
+        # Concatenate to make it 1025 dimensions (batch_size, 1025)
         x_joint = torch.cat([x_t_flat, t_col], dim=1)
         joint_samples.append(x_joint)
         
@@ -161,6 +161,61 @@ def create_joint_dataset(trajectory_dict, dir="pc-arena/data/TrajMNIST", splits=
     print(f"Val:   {val_dataset.shape} -> {val_path}")
     print(f"Test:  {test_dataset.shape} -> {test_path}")
     
+def create_paired_dataset(trajectory_dict, dir="pc-arena/data/PairedTrajMNIST", splits=(0.8, 0.1, 0.1)):
+    # Ensure anchors are sorted descending: [1.0, 0.75, 0.5, 0.25, 0.0]
+    sorted_anchors = sorted(list(trajectory_dict.keys()), reverse=True)
+    
+    paired_samples = []
+    
+    # Iterate through adjacent pairs (e.g., 1.0 -> 0.75)
+    for i in range(len(sorted_anchors) - 1):
+        t_curr = sorted_anchors[i]
+        t_next = sorted_anchors[i+1]
+        
+        x_curr = trajectory_dict[t_curr].flatten(start_dim=1)
+        x_next = trajectory_dict[t_next].flatten(start_dim=1)
+        
+        b = x_curr.size(0)
+        t_col = torch.full((b, 1), float(t_curr), dtype=x_curr.dtype, device=x_curr.device)
+        
+        # Concatenate along dim=1 -> (B, 1024 + 1024 + 1) = (B, 2049)
+        pair_tensor = torch.cat([x_curr, x_next, t_col], dim=1)
+        paired_samples.append(pair_tensor)
+        
+    full_dataset = torch.cat(paired_samples, dim=0)
+    
+    indices = torch.randperm(full_dataset.size(0))
+    shuffled_dataset = full_dataset[indices]
+    
+    # --- SPLITTING LOGIC ---
+    total_samples = shuffled_dataset.size(0)
+    train_size = int(splits[0] * total_samples)
+    val_size = int(splits[1] * total_samples)
+    
+    train_dataset = shuffled_dataset[:train_size]
+    val_dataset = shuffled_dataset[train_size : train_size + val_size]
+    test_dataset = shuffled_dataset[train_size + val_size :]
+    
+    # Shuffle to ensure mixed batches
+    indices = torch.randperm(full_dataset.size(0))
+    shuffled_dataset = full_dataset[indices]
+    
+    os.makedirs(dir, exist_ok=True)
+    train_path = os.path.join(dir, "train.pt")
+    val_path = os.path.join(dir, "val.pt")
+    test_path = os.path.join(dir, "test.pt")
+    
+    torch.save(train_dataset, train_path)
+    torch.save(val_dataset, val_path)
+    torch.save(test_dataset, test_path)
+    
+    print(f"Total joint samples: {total_samples}")
+    print(f"Train: {train_dataset.shape} -> {train_path}")
+    print(f"Val:   {val_dataset.shape} -> {val_path}")
+    print(f"Test:  {test_dataset.shape} -> {test_path}")
+    
+    print(f"Saved Paired Trajectories: {shuffled_dataset.shape} -> {train_path}")    
+
 if __name__ == "__main__":
     channels = 1
     model = DiT_Llama(
@@ -193,4 +248,4 @@ if __name__ == "__main__":
             cfg=2.0
         )
         
-    create_joint_dataset(trajectory_dict, dir="pc-arena/data/TrajMNIST")
+    create_paired_dataset(trajectory_dict, dir="pc_arena/data/TrajMNIST")
