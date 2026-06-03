@@ -19,6 +19,10 @@ from src.data.subsampler import DistributedSubsetSampler
 from src.sgd import SGDWrapper
 from training.utils import ddp_setup, get_free_port, mkdir_p, copy_configs, resolve_tuple
 from training.engine import build_or_load_pc
+
+sys.path.append("../")
+from rec_flow.rf import RF
+from rec_flow.dit import DiT_Llama
 import wandb
 
 # ---------------------------------------------------------
@@ -27,7 +31,6 @@ import wandb
 class TimeMLP(nn.Module):
     def __init__(self, num_leaves):
         super().__init__()
-        # 1-Dimensional input (t), outputs Mu and Sigma for every leaf node
         self.net = nn.Sequential(
             nn.Linear(1, 256),
             nn.SiLU(),
@@ -36,11 +39,15 @@ class TimeMLP(nn.Module):
             nn.Linear(256, num_leaves * 2) 
         )
         
+        # NEW: Force the initial outputs to be exactly zero.
+        # This guarantees mu=0 and log_var=0 (sigma=1) on the first forward pass.
+        torch.nn.init.zeros_(self.net[-1].weight)
+        torch.nn.init.zeros_(self.net[-1].bias)
+        
     def forward(self, t):
         out = self.net(t)
         mu, log_var = out.chunk(2, dim=-1)
-        # Ensure variance is strictly positive to prevent density collapse
-        sigma = torch.exp(0.5 * log_var) + 1e-4 
+        sigma = torch.exp(0.5 * log_var) + 1e-2 
         return mu, sigma
 
 def parse_arguments():
@@ -99,7 +106,18 @@ def main(rank, world_size, args):
     mlp = TimeMLP(num_leaves=num_leaves).to(device)
     # Wrap MLP in DDP
     mlp = torch.nn.parallel.DistributedDataParallel(mlp, device_ids=[rank])
-    optimizer = optim.Adam(mlp.parameters(), lr=args.lr)
+    optimizer = torch.optim.Adam([
+        {'params': mlp.parameters(), 'lr': 1e-3},
+        {'params': pc.parameters(), 'lr': 1e-2}
+    ])
+    
+    channels = 1
+    rf_dit = DiT_Llama(
+            channels, 32, dim=64, n_layers=6, n_heads=4, num_classes=10
+        ).cuda()
+    rf_dit.load_state_dict(torch.load("../contents/epoch_100/weight.pt"))
+    
+    rf_dit.eval()
 
     train_sampler = DistributedSubsetSampler(dsets.datasets["train"], subset_size=1000000, shuffle=True)
     tr_loader = dsets._train_dataloader(sampler = train_sampler)
@@ -127,18 +145,17 @@ def main(rank, world_size, args):
             
             # We no longer need batch_x_next because we are maximizing marginal likelihood!
             batch_x_current = batch[:, :1024]
-            batch_x_next = batch[:, 1024:2048]
-            t_current = batch[:, 2048:] # Shape: (B, 1)
+            t_current = batch[:, 1024:1025]
+            label = batch[:, 1025:]
             
             optimizer.zero_grad()
             
-            # 1. Calculate the True Target Velocity (Finite Difference)
-            # v = dx / dt
-            dt = 0.25 # The distance between your anchors (e.g., 0.75 - 0.50)
-            
-            # Depending on your ODE step direction (e.g., Euler step: z = z - dt * v)
-            # The velocity that drove x_current to x_next is:
-            target_velocity = (batch_x_current - batch_x_next) / dt
+            with torch.no_grad():
+                target_velocity = rf_dit(
+                    batch_x_current.view(-1, 1, 32, 32), 
+                    t_current.squeeze(-1), 
+                    label.long().squeeze(-1)
+                ).flatten(start_dim=1)
             
             # CRITICAL: We need gradients with respect to the input to extract the Score
             batch_x_current.requires_grad_(True)
@@ -180,21 +197,23 @@ def main(rank, world_size, args):
             exact_score = leaf_flows * grad_gaussian
             exact_score = exact_score.view(batch_size, num_vars, K).sum(dim=-1)
 
-            # E. The Missing Bridge: Convert Score to Velocity
-            # (Assuming standard OT Flow where t=1 is noise and t=0 is data, 
-            # adjust the t coefficients based on your exact ODE formulation)
-            t_reshaped = t_current.view(batch_size, 1)
+            # E. Corrected Algebraic Score-to-Velocity Conversion (Diffusion Convention)
+            t_reshaped = t_current.view(-1, 1)
             
-            # Prevent division by zero at t=0
-            t_safe = torch.clamp(t_reshaped, min=1e-5) 
+            # The singularity is at t=1.0, so we clamp the (1 - t) denominator
+            denom_safe = torch.clamp(1.0 - t_reshaped, min=1e-3) 
             
-            # v_t = (x_t / t) + ((1-t) / t) * Score
-            predicted_velocity = (batch_x_current) + ((1 - t_reshaped)) * exact_score
-
-            # F. Now it is mathematically safe to use MSE
-            loss = torch.nn.functional.mse_loss(predicted_velocity, t_reshaped * target_velocity)
+            # v_t = -(x_t + t * Score) / (1 - t)
+            predicted_velocity = -(batch_x_current + t_reshaped * exact_score) / denom_safe
+            
+            # F. Second Derivative: Joint Huber Backpropagation
+            loss = torch.nn.functional.l1_loss(predicted_velocity, target_velocity)
             
             loss.backward()
+            
+            torch.nn.utils.clip_grad_norm_(mlp.parameters(), max_norm=1.0)
+            torch.nn.utils.clip_grad_norm_(pc.parameters(), max_norm=1.0)
+            
             optimizer.step()
 
             # Distributed Logging

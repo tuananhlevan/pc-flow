@@ -112,10 +112,12 @@ def main():
         
         # E. Convert Score to Target Velocity (Tweedie Math)
         # Clamp t to prevent catastrophic division by zero at the final step
-        t_safe = max(t_val, 1e-4) 
-        velocity = (x_t / t_safe) + ((1.0 - t_val) / t_safe) * score
+        denom_safe = max(1.0 - t_val, 1e-3) 
         
-        # F. Euler Step
+        # v_t = -(x_t + t * Score) / (1 - t)
+        velocity = -(x_t + t_val * score) / denom_safe
+        
+        # F. Euler Step (remains exactly the same)
         x_t = x_t - velocity * dt
 
     print("Flow trajectory complete!")
