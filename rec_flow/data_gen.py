@@ -93,7 +93,7 @@ def create_joint_dataset(trajectory_dict, conditions, dir="pc_arena/data/TrajMNI
         x_joint = torch.cat([x_t_flat, t_col, label_col], dim=1)
         joint_samples.append(x_joint)
         
-    full_joint_dataset = torch.cat(joint_samples, dim=0)
+    full_joint_dataset = torch.stack(joint_samples, dim=1)
     
     indices = torch.randperm(full_joint_dataset.size(0))
     shuffled_dataset = full_joint_dataset[indices]
@@ -124,7 +124,6 @@ def create_paired_dataset(trajectory_dict, conditions, dir="pc_arena/data/Paired
         
         x_curr = trajectory_dict[t_curr].flatten(start_dim=1)
         x_next = trajectory_dict[t_next].flatten(start_dim=1)
-        
         b = x_curr.size(0)
         t_col = torch.full((b, 1), float(t_curr), dtype=x_curr.dtype, device=x_curr.device)
         
@@ -135,7 +134,7 @@ def create_paired_dataset(trajectory_dict, conditions, dir="pc_arena/data/Paired
         pair_tensor = torch.cat([x_curr, x_next, t_col, label_col], dim=1)
         paired_samples.append(pair_tensor)
         
-    full_dataset = torch.cat(paired_samples, dim=0)
+    full_dataset = torch.stack(paired_samples, dim=1)
     
     indices = torch.randperm(full_dataset.size(0))
     shuffled_dataset = full_dataset[indices]

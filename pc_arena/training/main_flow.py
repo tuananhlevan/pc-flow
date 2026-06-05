@@ -105,17 +105,19 @@ def main(rank, world_size, args):
     num_leaves = pc.input_layer_group[0].params.size(0) // 2 
     
     mlp = TimeMLP(num_leaves=num_leaves).to(device)
-    # Wrap MLP in DDP
-    mlp = torch.nn.parallel.DistributedDataParallel(mlp, device_ids=[rank])
     optimizer = torch.optim.Adam([
         {'params': mlp.parameters(), 'lr': 1e-3},
         {'params': pc.parameters(), 'lr': 1e-2}
     ])
     
     if args.resume:
-        mlp.load_state_dict(torch.load(os.path.join(base_folder, "last_mlp.pt"), map_location=device))
+        sd = torch.load(os.path.join(base_folder, "last_mlp.pt"), map_location=device)
+        mlp.load_state_dict(sd)
         optim_state = torch.load(os.path.join(base_folder, "last_optim.pt"), map_location=device)
         optimizer.load_state_dict(optim_state)
+    
+    # Wrap MLP in DDP
+    mlp = torch.nn.parallel.DistributedDataParallel(mlp, device_ids=[rank])
     
     channels = 1
     rf_dit = DiT_Llama(
@@ -143,34 +145,43 @@ def main(rank, world_size, args):
         if rank == 0: progress_bar.new_epoch_begin()
 
         for batch_data in tr_loader:
-            
             if isinstance(batch_data, torch.Tensor):
                 batch = batch_data.to(device)
             else:
                 batch = batch_data[0].to(device)
-            
-            # We no longer need batch_x_next because we are maximizing marginal likelihood!
-            batch_x_current = batch[:, :1024]
-            t_current = batch[:, 1024:1025]
-            labels = batch[:, 1025:]
-            uncond_labels = torch.full_like(labels.long().squeeze(-1), 10)
+                
+            b = batch.size(0)
+            batch = batch.view(b, -1, 1026)
+            num_anchors = batch.size(1)
             
             optimizer.zero_grad()
             
+            num_pairs = batch.size(1)
+            time_idx = torch.randint(0, num_pairs, (1,)).item()
+            
+            # for time_idx in range(num_anchors):
+            # Extract the data for just that time interval -> Shape: (B, 1026)
+            batch_t = batch[:, time_idx, :]
+            
+            batch_x_current = batch_t[:, :1024]
+            t_current = (batch_t[:, 1024:1025] + 1) / 2 # Un-normalized due to mistake in data generation
+            t_val = t_current[0].view(1, 1)
+            
+            labels = batch_t[:, 1025:]
+                        
             with torch.no_grad():
                 target_velocity = rf_dit(
                     batch_x_current.view(-1, 1, 32, 32), 
                     t_current.squeeze(-1), 
-                    # labels.long().squeeze(-1), 
-                    uncond_labels
+                    labels.long().squeeze(-1), 
+                    # uncond_labels
                 ).flatten(start_dim=1)
             
-            # CRITICAL: We need gradients with respect to the input to extract the Score
             batch_x_current.requires_grad_(True)
 
             # 2. Inject Time into PC Leaves
             # We condition the PC on the current time step
-            mu, sigma = mlp(t_current.mean().view(1, 1)) # Use mean if batch shares the same t
+            mu, sigma = mlp(t_val)
             dynamic_params = torch.stack([mu.squeeze(), sigma.squeeze()], dim=-1).flatten()
             
             if isinstance(pc.input_layer_group[0].params, torch.nn.Parameter):

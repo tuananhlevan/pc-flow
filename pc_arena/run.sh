@@ -1,1 +1,1 @@
-python -m training.main_flow --data-config traj_mnist --st-data-config distilled_mnist --model-config hclt_latent --num-epochs 150
+python -m training.main_flow --data-config traj_mnist --st-data-config distilled_mnist --model-config hclt_latent --num-epochs 300 --resume
